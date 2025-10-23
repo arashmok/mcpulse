@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     # LLM API Keys
     openai_api_key: Optional[str] = Field(None, alias="OPENAI_API_KEY")
     anthropic_api_key: Optional[str] = Field(None, alias="ANTHROPIC_API_KEY")
+    openrouter_api_key: Optional[str] = Field(None, alias="OPENROUTER_API_KEY")
     
     # MongoDB Configuration
     mongodb_uri: Optional[str] = Field("mongodb://localhost:27017", alias="MONGODB_URI")
@@ -19,6 +20,7 @@ class Settings(BaseSettings):
     
     # Application Settings
     default_model: str = Field("gpt-4-turbo-preview", alias="DEFAULT_MODEL")
+    default_provider: str = Field("openai", alias="DEFAULT_PROVIDER")  # openai, anthropic, or openrouter
     log_level: str = Field("INFO", alias="LOG_LEVEL")
     gradio_server_port: int = Field(7860, alias="GRADIO_SERVER_PORT")
     gradio_server_name: str = Field("0.0.0.0", alias="GRADIO_SERVER_NAME")

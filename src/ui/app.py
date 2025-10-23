@@ -25,29 +25,60 @@ class MCPulseApp:
         self.current_session_id = str(uuid.uuid4())
         self.use_mongodb = False
         
+        # LLM configuration (stored in memory, can be updated via GUI)
+        self.api_keys = {
+            "openai": settings.openai_api_key,
+            "anthropic": settings.anthropic_api_key,
+            "openrouter": settings.openrouter_api_key
+        }
+        self.current_provider = settings.default_provider
+        self.current_model = settings.default_model
+        
         # LLM client (will be initialized based on available API keys)
         self.llm_client = None
         self._initialize_llm()
     
-    def _initialize_llm(self):
+    def _initialize_llm(self, provider: Optional[str] = None, api_key: Optional[str] = None):
         """Initialize LLM client based on available API keys."""
         try:
-            if settings.openai_api_key:
+            # Use provided values or fall back to stored configuration
+            if provider:
+                self.current_provider = provider
+            if api_key:
+                self.api_keys[self.current_provider] = api_key
+            
+            # Get the API key for current provider
+            key = self.api_keys.get(self.current_provider)
+            
+            if self.current_provider == "openai" and key and not key.startswith("your_"):
                 from openai import AsyncOpenAI
-                self.llm_client = AsyncOpenAI(api_key=settings.openai_api_key)
+                self.llm_client = AsyncOpenAI(api_key=key)
                 self.llm_provider = "openai"
                 logger.info("Initialized OpenAI client")
-            elif settings.anthropic_api_key:
+                return True
+            elif self.current_provider == "anthropic" and key and not key.startswith("your_"):
                 from anthropic import AsyncAnthropic
-                self.llm_client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+                self.llm_client = AsyncAnthropic(api_key=key)
                 self.llm_provider = "anthropic"
                 logger.info("Initialized Anthropic client")
+                return True
+            elif self.current_provider == "openrouter" and key and not key.startswith("your_"):
+                from openai import AsyncOpenAI
+                self.llm_client = AsyncOpenAI(
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key=key
+                )
+                self.llm_provider = "openrouter"
+                logger.info("Initialized OpenRouter client")
+                return True
             else:
-                logger.warning("No LLM API key configured")
+                logger.warning(f"No valid API key configured for {self.current_provider}")
                 self.llm_provider = None
+                return False
         except Exception as e:
             logger.error(f"Error initializing LLM client: {e}")
             self.llm_provider = None
+            return False
     
     async def setup_mongodb(self, uri: str, database: str, collection: str) -> str:
         """
@@ -79,6 +110,46 @@ class MCPulseApp:
         except Exception as e:
             logger.error(f"MongoDB setup error: {e}")
             return f"❌ Error setting up MongoDB: {str(e)}"
+    
+    def update_llm_config(self, provider: str, api_key: str, model: str) -> str:
+        """
+        Update LLM configuration.
+        
+        Args:
+            provider: LLM provider (openai, anthropic, openrouter)
+            api_key: API key for the provider
+            model: Model name to use
+        
+        Returns:
+            Status message
+        """
+        try:
+            if not api_key or api_key.startswith("your_") or api_key.strip() == "":
+                return "❌ Please enter a valid API key"
+            
+            # Update model
+            if model and model.strip():
+                self.current_model = model.strip()
+            
+            # Initialize with new configuration
+            success = self._initialize_llm(provider=provider, api_key=api_key)
+            
+            if success:
+                return f"✅ Successfully configured {provider.upper()} with model {self.current_model}"
+            else:
+                return f"❌ Failed to initialize {provider.upper()} client. Check your API key."
+                
+        except Exception as e:
+            logger.error(f"Error updating LLM config: {e}")
+            return f"❌ Error: {str(e)}"
+    
+    def get_current_llm_config(self) -> Dict[str, str]:
+        """Get current LLM configuration."""
+        return {
+            "provider": self.current_provider,
+            "model": self.current_model,
+            "status": "✅ Connected" if self.llm_client else "❌ Not configured"
+        }
     
     def add_server(self, name: str, url: str, description: str) -> Tuple[str, gr.update]:
         """Add a new MCP server."""
@@ -434,6 +505,54 @@ class MCPulseApp:
                 
                 # Configuration Tab
                 with gr.Tab("⚙️ Configuration"):
+                    gr.Markdown("## LLM Provider Configuration")
+                    gr.Markdown("Configure your AI provider and API key here. Changes take effect immediately.")
+                    
+                    with gr.Row():
+                        with gr.Column():
+                            llm_provider = gr.Dropdown(
+                                choices=["openai", "anthropic", "openrouter"],
+                                label="LLM Provider",
+                                value=self.current_provider,
+                                info="Select your AI provider"
+                            )
+                            llm_api_key = gr.Textbox(
+                                label="API Key",
+                                placeholder="Enter your API key here",
+                                type="password",
+                                info="Your API key (kept secure, not logged)"
+                            )
+                            llm_model = gr.Textbox(
+                                label="Model Name",
+                                value=self.current_model,
+                                placeholder="e.g., gpt-4-turbo-preview",
+                                info="Model to use for chat completions"
+                            )
+                            
+                            with gr.Accordion("📝 Provider Information & Model Examples", open=False):
+                                gr.Markdown("""
+                                **OpenAI:**
+                                - Get API key: https://platform.openai.com/api-keys
+                                - Models: `gpt-4-turbo-preview`, `gpt-4`, `gpt-3.5-turbo`
+                                
+                                **Anthropic:**
+                                - Get API key: https://console.anthropic.com/settings/keys
+                                - Models: `claude-3-5-sonnet-20241022`, `claude-3-opus-20240229`
+                                
+                                **OpenRouter:**
+                                - Get API key: https://openrouter.ai/keys
+                                - Models: `openai/gpt-4-turbo`, `anthropic/claude-3.5-sonnet`, `google/gemini-pro`
+                                - Supports 100+ models from multiple providers
+                                """)
+                            
+                            update_llm_btn = gr.Button("💾 Update LLM Configuration", variant="primary")
+                            llm_status = gr.Textbox(
+                                label="Status",
+                                value=self.get_current_llm_config()["status"],
+                                interactive=False
+                            )
+                    
+                    gr.Markdown("---")
                     gr.Markdown("## MCP Server Management")
                     
                     with gr.Row():
@@ -500,7 +619,19 @@ class MCPulseApp:
                 self.use_mongodb = enabled
                 return f"MongoDB: {'Enabled' if enabled else 'Disabled'}"
             
+            def update_llm_handler(provider, api_key, model):
+                return self.update_llm_config(provider, api_key, model)
+            
             # Wire up events
+            
+            # LLM Configuration
+            update_llm_btn.click(
+                update_llm_handler,
+                inputs=[llm_provider, llm_api_key, llm_model],
+                outputs=[llm_status]
+            )
+            
+            # Chat events
             send_btn.click(
                 send_message,
                 inputs=[msg_input, chatbot, server_selector, system_prompt],
