@@ -124,6 +124,8 @@ class MCPulseApp:
             Status message
         """
         try:
+            logger.info(f"update_llm_config called - provider: {provider}, api_key present: {bool(api_key)}, model: {model}")
+            
             if not api_key or api_key.startswith("your_") or api_key.strip() == "":
                 return "❌ Please enter a valid API key"
             
@@ -133,6 +135,8 @@ class MCPulseApp:
             
             # Initialize with new configuration
             success = self._initialize_llm(provider=provider, api_key=api_key)
+            
+            logger.info(f"LLM initialization result - success: {success}, llm_provider: {self.llm_provider}")
             
             if success:
                 return f"✅ Successfully configured {provider.upper()} with model {self.current_model}"
@@ -145,10 +149,22 @@ class MCPulseApp:
     
     def get_current_llm_config(self) -> Dict[str, str]:
         """Get current LLM configuration."""
+        logger.info(f"Getting LLM config - llm_client: {self.llm_client is not None}, api_keys: {[(k, 'SET' if v else 'NONE') for k, v in self.api_keys.items()]}")
+        
+        if self.llm_client:
+            status = f"✅ {self.current_provider.upper()}: {self.current_model}"
+        else:
+            configured_providers = [k.upper() for k, v in self.api_keys.items() if v and not v.startswith("your_")]
+            logger.info(f"Configured providers: {configured_providers}")
+            if configured_providers:
+                status = f"⚠️ API keys configured for: {', '.join(configured_providers)}\n💡 Select provider and model above"
+            else:
+                status = "⚠️ No API keys configured\n💡 Add them in Configuration tab"
+        
         return {
             "provider": self.current_provider,
             "model": self.current_model,
-            "status": "✅ Connected" if self.llm_client else "❌ Not configured"
+            "status": status
         }
     
     async def fetch_available_models(self, provider: str, api_key: str) -> Tuple[gr.update, str]:
@@ -229,26 +245,33 @@ class MCPulseApp:
         try:
             updated = []
             
-            if openai_key and openai_key.strip():
+            if openai_key and openai_key.strip() and not openai_key.startswith("your_"):
                 self.api_keys["openai"] = openai_key.strip()
                 updated.append("OpenAI")
             
-            if anthropic_key and anthropic_key.strip():
+            if anthropic_key and anthropic_key.strip() and not anthropic_key.startswith("your_"):
                 self.api_keys["anthropic"] = anthropic_key.strip()
                 updated.append("Anthropic")
             
-            if openrouter_key and openrouter_key.strip():
+            if openrouter_key and openrouter_key.strip() and not openrouter_key.startswith("your_"):
                 self.api_keys["openrouter"] = openrouter_key.strip()
                 updated.append("OpenRouter")
             
             if updated:
-                configured = [k for k, v in self.api_keys.items() if v]
-                return f"✅ Updated: {', '.join(updated)}\n🔑 Configured providers: {', '.join(configured)}"
+                configured = [k.upper() for k, v in self.api_keys.items() if v and not v.startswith("your_")]
+                
+                # If current provider has a key now and no LLM client, try to initialize
+                current_key = self.api_keys.get(self.current_provider, "")
+                if current_key and not current_key.startswith("your_") and not self.llm_client:
+                    self._initialize_llm(provider=self.current_provider, api_key=current_key)
+                
+                return f"✅ Saved: {', '.join(updated)}\n🔑 Ready to use: {', '.join(configured)}\n💡 Go to Chat tab to select model!"
             else:
-                return "⚠️ No API keys provided"
+                return "⚠️ No valid API keys provided"
         
         except Exception as e:
             logger.error(f"Error saving API keys: {e}")
+            return f"❌ Error: {str(e)}"
             return f"❌ Error: {str(e)}"
     
     def add_server(self, name: str, url: str, description: str) -> Tuple[str, gr.update]:
@@ -410,16 +433,25 @@ class MCPulseApp:
         max_iterations = 5
         iteration = 0
         
+        logger.info(f"Chat request - llm_provider: {self.llm_provider}, current_provider: {self.current_provider}, current_model: {self.current_model}")
+        
         while iteration < max_iterations:
             iteration += 1
             
             try:
-                if self.llm_provider == "openai":
+                if self.llm_provider in ["openai", "openrouter"]:
+                    # OpenRouter uses OpenAI-compatible API
                     response = await self._call_openai(messages, tools)
                 elif self.llm_provider == "anthropic":
                     response = await self._call_anthropic(messages, tools)
                 else:
-                    return "⚠️ No LLM provider configured"
+                    # No LLM provider is initialized
+                    logger.warning(f"No LLM provider initialized. llm_provider={self.llm_provider}, llm_client={self.llm_client}")
+                    configured_providers = [k.upper() for k, v in self.api_keys.items() if v and not v.startswith("your_")]
+                    if configured_providers:
+                        return f"⚠️ Please select a provider and model in the sidebar.\n\n📋 Available: {', '.join(configured_providers)}"
+                    else:
+                        return "⚠️ No API keys configured. Please:\n1. Go to Configuration tab\n2. Enter your API key\n3. Return to Chat tab\n4. Select provider and model"
                 
                 # Check if tool calls are needed
                 if not response.get("tool_calls"):
@@ -598,7 +630,7 @@ class MCPulseApp:
                             
                             llm_info_status = gr.Textbox(
                                 label="",
-                                value=self.get_current_llm_config()["status"],
+                                value="Loading status...",
                                 interactive=False,
                                 show_label=False,
                                 lines=2
@@ -783,6 +815,9 @@ class MCPulseApp:
                 save_keys_handler,
                 inputs=[config_openai_key, config_anthropic_key, config_openrouter_key],
                 outputs=[keys_status]
+            ).then(
+                lambda: self.get_current_llm_config()["status"],
+                outputs=[llm_info_status]
             )
             
             # Chat events
@@ -839,6 +874,12 @@ class MCPulseApp:
                 toggle_mongo,
                 inputs=[use_mongo_checkbox],
                 outputs=[mongo_status]
+            )
+            
+            # Update status on page load
+            app.load(
+                lambda: self.get_current_llm_config()["status"],
+                outputs=[llm_info_status]
             )
         
         return app
