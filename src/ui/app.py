@@ -4,6 +4,8 @@ import gradio as gr
 import asyncio
 import logging
 import uuid
+import os
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 import json
@@ -13,6 +15,34 @@ from ..database import MongoHandler
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+# Path for storing API keys
+API_KEYS_FILE = Path.home() / ".mcpulse" / "api_keys.json"
+
+
+def save_api_keys_to_file(api_keys: Dict[str, str]):
+    """Save API keys to a local file."""
+    try:
+        API_KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(API_KEYS_FILE, 'w') as f:
+            json.dump(api_keys, f)
+        logger.info(f"API keys saved to {API_KEYS_FILE}")
+    except Exception as e:
+        logger.error(f"Error saving API keys: {e}")
+
+
+def load_api_keys_from_file() -> Dict[str, str]:
+    """Load API keys from local file."""
+    try:
+        if API_KEYS_FILE.exists():
+            with open(API_KEYS_FILE, 'r') as f:
+                keys = json.load(f)
+            logger.info(f"API keys loaded from {API_KEYS_FILE}")
+            return keys
+        return {}
+    except Exception as e:
+        logger.error(f"Error loading API keys: {e}")
+        return {}
 
 
 def serialize_mcp_content(content: Any) -> str:
@@ -63,11 +93,18 @@ class MCPulseApp:
         self.current_session_id = str(uuid.uuid4())
         self.use_mongodb = False
         
+        # Load API keys from file first, then override with env vars if present and valid
+        saved_keys = load_api_keys_from_file()
+        
+        # Helper to check if key is valid (not None, not empty, not placeholder)
+        def is_valid_key(key):
+            return key and not key.startswith("your_") and key.strip() != ""
+        
         # LLM configuration (stored in memory, can be updated via GUI)
         self.api_keys = {
-            "openai": settings.openai_api_key,
-            "anthropic": settings.anthropic_api_key,
-            "openrouter": settings.openrouter_api_key
+            "openai": saved_keys.get("openai", "") if saved_keys.get("openai") else (settings.openai_api_key if is_valid_key(settings.openai_api_key) else ""),
+            "anthropic": saved_keys.get("anthropic", "") if saved_keys.get("anthropic") else (settings.anthropic_api_key if is_valid_key(settings.anthropic_api_key) else ""),
+            "openrouter": saved_keys.get("openrouter", "") if saved_keys.get("openrouter") else (settings.openrouter_api_key if is_valid_key(settings.openrouter_api_key) else "")
         }
         self.current_provider = settings.default_provider
         self.current_model = settings.default_model
@@ -296,6 +333,10 @@ class MCPulseApp:
                 updated.append("OpenRouter")
             
             if updated:
+                # Save only valid keys to file for persistence (filter out empty ones)
+                keys_to_save = {k: v for k, v in self.api_keys.items() if v and not v.startswith("your_")}
+                save_api_keys_to_file(keys_to_save)
+                
                 configured = [k.upper() for k, v in self.api_keys.items() if v and not v.startswith("your_")]
                 
                 # If current provider has a key now and no LLM client, try to initialize
@@ -303,13 +344,12 @@ class MCPulseApp:
                 if current_key and not current_key.startswith("your_") and not self.llm_client:
                     self._initialize_llm(provider=self.current_provider, api_key=current_key)
                 
-                return f"✅ Saved: {', '.join(updated)}\n🔑 Ready to use: {', '.join(configured)}\n💡 Go to Chat tab to select model!"
+                return f"✅ Saved: {', '.join(updated)}\n🔑 Ready to use: {', '.join(configured)}\n💾 Keys saved to: {API_KEYS_FILE}\n💡 Go to Chat tab to select model!"
             else:
                 return "⚠️ No valid API keys provided"
         
         except Exception as e:
             logger.error(f"Error saving API keys: {e}")
-            return f"❌ Error: {str(e)}"
             return f"❌ Error: {str(e)}"
     
     def add_server(self, name: str, url: str, description: str) -> Tuple[str, gr.update]:
@@ -646,7 +686,7 @@ class MCPulseApp:
     def create_interface(self) -> gr.Blocks:
         """Create and return the Gradio interface."""
         
-        # Custom CSS for thinking animation
+        # Custom CSS for thinking animation and password fields
         custom_css = """
         @keyframes thinking {
             0%, 20% { opacity: 0.3; }
@@ -666,9 +706,58 @@ class MCPulseApp:
         .thinking-dots:nth-child(3) {
             animation-delay: 0.4s;
         }
+        
+        /* Password field with inline eye icon */
+        .password-wrapper {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+        
+        .password-wrapper input {
+            padding-right: 45px !important;
+        }
+        
+        .eye-toggle {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            cursor: pointer;
+            color: #888;
+            font-size: 18px;
+            z-index: 100;
+            user-select: none;
+            transition: color 0.2s;
+        }
+        
+        .eye-toggle:hover {
+            color: #333;
+        }
         """
         
-        with gr.Blocks(title="MCPulse - MCP SSE Client", theme=gr.themes.Soft(), css=custom_css) as app:
+        with gr.Blocks(title="MCPulse - MCP SSE Client", theme=gr.themes.Soft(), css=custom_css, head="""
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        <style>
+        .eye-icon-btn {
+            position: absolute !important;
+            right: 10px !important;
+            top: 50% !important;
+            transform: translateY(-50%) !important;
+            cursor: pointer !important;
+            font-size: 18px !important;
+            z-index: 9999 !important;
+            background: transparent !important;
+            padding: 4px 8px !important;
+            border-radius: 4px !important;
+            color: #666 !important;
+            transition: color 0.2s !important;
+        }
+        .eye-icon-btn:hover {
+            color: #333 !important;
+        }
+        </style>
+        """) as app:
             gr.Markdown("# 🔌 MCPulse - MCP SSE Client")
             gr.Markdown("Connect to MCP servers and chat with AI assistants that can use their tools.")
             
@@ -763,19 +852,27 @@ class MCPulseApp:
                             config_openai_key = gr.Textbox(
                                 label="OpenAI API Key",
                                 placeholder="sk-...",
+                                value=self.api_keys.get("openai", ""),
                                 type="password",
+                                elem_id="openai-api-key",
                                 info="Get your key at: https://platform.openai.com/api-keys"
                             )
+                            
                             config_anthropic_key = gr.Textbox(
                                 label="Anthropic API Key",
                                 placeholder="sk-ant-...",
+                                value=self.api_keys.get("anthropic", ""),
                                 type="password",
+                                elem_id="anthropic-api-key",
                                 info="Get your key at: https://console.anthropic.com/settings/keys"
                             )
+                            
                             config_openrouter_key = gr.Textbox(
                                 label="OpenRouter API Key",
                                 placeholder="sk-or-...",
+                                value=self.api_keys.get("openrouter", ""),
                                 type="password",
+                                elem_id="openrouter-api-key",
                                 info="Get your key at: https://openrouter.ai/keys (Access 100+ models)"
                             )
                             
@@ -900,6 +997,7 @@ class MCPulseApp:
             )
             
             # Configuration tab - API Keys
+            
             save_keys_btn.click(
                 save_keys_handler,
                 inputs=[config_openai_key, config_anthropic_key, config_openrouter_key],
@@ -969,6 +1067,68 @@ class MCPulseApp:
             app.load(
                 lambda: self.get_current_llm_config()["status"],
                 outputs=[llm_info_status]
+            )
+            
+            # Load saved API keys on page load
+            app.load(
+                lambda: [
+                    self.api_keys.get("openai", ""),
+                    self.api_keys.get("anthropic", ""),
+                    self.api_keys.get("openrouter", ""),
+                    f"Current providers configured: {', '.join([k.upper() for k, v in self.api_keys.items() if v and not v.startswith('your_')])}"
+                ],
+                outputs=[config_openai_key, config_anthropic_key, config_openrouter_key, keys_status]
+            )
+            
+            # Add eye icons using JavaScript on app load
+            app.load(
+                None,
+                None,
+                None,
+                js="""
+                () => {
+                    function addEyeIcons() {
+                        const pwFields = document.querySelectorAll('input[type="password"]');
+                        
+                        pwFields.forEach(function(input) {
+                            if (input.dataset.hasEye) return;
+                            
+                            const ph = input.getAttribute('placeholder') || '';
+                            if (!ph.startsWith('sk')) return;
+                            
+                            input.dataset.hasEye = 'true';
+                            input.style.paddingRight = '40px';
+                            
+                            const eye = document.createElement('i');
+                            eye.className = 'fas fa-eye eye-icon-btn';
+                            eye.onclick = function() {
+                                if (input.type === 'password') {
+                                    input.type = 'text';
+                                    eye.className = 'fas fa-eye-slash eye-icon-btn';
+                                } else {
+                                    input.type = 'password';
+                                    eye.className = 'fas fa-eye eye-icon-btn';
+                                }
+                            };
+                            
+                            input.parentElement.style.position = 'relative';
+                            input.parentElement.appendChild(eye);
+                        });
+                    }
+                    
+                    // Run after delays to handle async rendering
+                    setTimeout(addEyeIcons, 500);
+                    setTimeout(addEyeIcons, 1000);
+                    setTimeout(addEyeIcons, 2000);
+                    
+                    // Listen for config tab clicks
+                    document.addEventListener('click', function(e) {
+                        if (e.target.textContent && e.target.textContent.includes('Configuration')) {
+                            setTimeout(addEyeIcons, 300);
+                        }
+                    });
+                }
+                """
             )
         
         return app
