@@ -366,7 +366,7 @@ class MCPulseApp:
         history: List[List[str]],
         selected_servers: List[str],
         system_prompt: str
-    ) -> Tuple[List[List[str]], str]:
+    ):
         """
         Process chat message with MCP tool integration.
         
@@ -376,14 +376,16 @@ class MCPulseApp:
             selected_servers: Selected MCP servers for this chat
             system_prompt: System prompt
         
-        Returns:
+        Yields:
             Updated history and empty string for input box
         """
         if not message.strip():
-            return history, ""
+            yield history, ""
+            return
         
-        # Add user message to history
+        # Add user message to history and immediately show it
         history.append([message, None])
+        yield history, ""
         
         try:
             # Save user message to MongoDB if enabled
@@ -449,7 +451,7 @@ class MCPulseApp:
             logger.error(f"Error in chat: {e}")
             history[-1][1] = f"❌ Error: {str(e)}"
         
-        return history, ""
+        yield history, ""
     
     async def _call_llm_with_tools(
         self,
@@ -813,7 +815,8 @@ class MCPulseApp:
             
             # Event handlers
             async def send_message(msg, history, servers, sys_prompt):
-                return await self.chat(msg, history, servers, sys_prompt)
+                async for updated_history, cleared_input in self.chat(msg, history, servers, sys_prompt):
+                    yield updated_history, cleared_input
             
             async def connect_servers_handler(servers):
                 return await self.connect_servers(servers)
