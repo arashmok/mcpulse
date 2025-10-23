@@ -15,6 +15,44 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 
+def serialize_mcp_content(content: Any) -> str:
+    """
+    Convert MCP content (TextContent, ImageContent, etc.) to JSON-serializable string.
+    
+    Args:
+        content: MCP content object or list of content objects
+    
+    Returns:
+        JSON-serializable string representation
+    """
+    try:
+        if isinstance(content, list):
+            # Handle list of content objects
+            parts = []
+            for item in content:
+                if hasattr(item, 'text'):
+                    # TextContent object
+                    parts.append(item.text)
+                elif hasattr(item, 'data'):
+                    # ImageContent or other binary content
+                    parts.append(f"[Binary content: {item.type if hasattr(item, 'type') else 'unknown'}]")
+                elif isinstance(item, dict):
+                    parts.append(json.dumps(item))
+                else:
+                    parts.append(str(item))
+            return "\n".join(parts)
+        elif hasattr(content, 'text'):
+            # Single TextContent object
+            return content.text
+        elif isinstance(content, dict):
+            return json.dumps(content)
+        else:
+            return str(content)
+    except Exception as e:
+        logger.error(f"Error serializing MCP content: {e}")
+        return str(content)
+
+
 class MCPulseApp:
     """Main application class for MCPulse Gradio interface."""
     
@@ -460,17 +498,35 @@ class MCPulseApp:
                 # Execute tool calls
                 tool_results = []
                 for tool_call in response["tool_calls"]:
-                    tool_name = tool_call["name"]
-                    tool_args = tool_call["arguments"]
+                    # Extract tool info - handle both formats
+                    if "function" in tool_call:
+                        # OpenAI format with nested function
+                        tool_name = tool_call["function"]["name"]
+                        tool_args_str = tool_call["function"]["arguments"]
+                        tool_args = json.loads(tool_args_str) if isinstance(tool_args_str, str) else tool_args_str
+                        tool_call_id = tool_call.get("id", tool_name)
+                    else:
+                        # Simplified format
+                        tool_name = tool_call["name"]
+                        tool_args = tool_call["arguments"]
+                        tool_call_id = tool_call.get("id", tool_name)
                     
                     if tool_name in tool_map:
                         server_name, actual_tool_name = tool_map[tool_name]
                         result = await self.session_manager.call_tool(
                             server_name, actual_tool_name, tool_args
                         )
+                        
+                        # Extract content from MCP result and serialize
+                        if isinstance(result, dict) and "content" in result:
+                            result_content = serialize_mcp_content(result["content"])
+                        else:
+                            result_content = serialize_mcp_content(result)
+                        
                         tool_results.append({
+                            "tool_call_id": tool_call_id,
                             "tool_name": tool_name,
-                            "result": result
+                            "result": result_content
                         })
                 
                 # Add tool results to messages and continue
@@ -483,8 +539,8 @@ class MCPulseApp:
                 for tr in tool_results:
                     messages.append({
                         "role": "tool",
-                        "tool_call_id": tr["tool_name"],
-                        "content": json.dumps(tr["result"])
+                        "tool_call_id": tr["tool_call_id"],
+                        "content": tr["result"]  # Already serialized as string
                     })
                 
             except Exception as e:
@@ -517,8 +573,12 @@ class MCPulseApp:
         if message.tool_calls:
             result["tool_calls"] = [
                 {
-                    "name": tc.function.name,
-                    "arguments": json.loads(tc.function.arguments)
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments  # Keep as string
+                    }
                 }
                 for tc in message.tool_calls
             ]
