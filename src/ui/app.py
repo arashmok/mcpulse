@@ -365,18 +365,23 @@ class MCPulseApp:
         else:
             return f"❌ {result['error']}", gr.update()
     
-    def remove_server(self, server_name: str) -> Tuple[str, gr.update]:
+    def remove_server(self, server_name: str) -> Tuple[str, gr.update, gr.update]:
         """Remove an MCP server."""
         if not server_name:
-            return "❌ Please select a server to remove", gr.update()
+            return "❌ Please select a server to remove", gr.update(), gr.update()
         
         result = self.session_manager.remove_server(server_name)
         
         if result["success"]:
             servers = self.session_manager.get_servers()
-            return f"✅ {result['message']}", gr.update(choices=[s['name'] for s in servers])
+            server_choices = [s['name'] for s in servers]
+            return (
+                f"✅ {result['message']}", 
+                gr.update(choices=server_choices),
+                gr.update(choices=server_choices)
+            )
         else:
-            return f"❌ {result['error']}", gr.update()
+            return f"❌ {result['error']}", gr.update(), gr.update()
     
     def get_server_list(self) -> List[str]:
         """Get list of configured server names."""
@@ -913,7 +918,6 @@ class MCPulseApp:
                                 placeholder="Optional description"
                             )
                             add_server_btn = gr.Button("Add Server", variant="primary")
-                            add_server_status = gr.Textbox(label="Status", interactive=False)
                         
                         with gr.Column():
                             gr.Markdown("### Remove Server")
@@ -922,7 +926,9 @@ class MCPulseApp:
                                 label="Select Server to Remove"
                             )
                             remove_server_btn = gr.Button("Remove Server", variant="stop")
-                            remove_server_status = gr.Textbox(label="Status", interactive=False)
+                    
+                    # Single status box for both Add and Remove operations
+                    server_management_status = gr.Textbox(label="Status", interactive=False)
                     
                     gr.Markdown("---")
                     gr.Markdown("## MongoDB Configuration")
@@ -1050,7 +1056,7 @@ class MCPulseApp:
             add_server_btn.click(
                 self.add_server,
                 inputs=[new_server_name, new_server_url, new_server_desc],
-                outputs=[add_server_status, server_selector]
+                outputs=[server_management_status, server_selector]
             ).then(
                 lambda: self.get_server_list(),
                 outputs=[remove_server_selector]
@@ -1059,10 +1065,7 @@ class MCPulseApp:
             remove_server_btn.click(
                 self.remove_server,
                 inputs=[remove_server_selector],
-                outputs=[remove_server_status, server_selector]
-            ).then(
-                lambda: self.get_server_list(),
-                outputs=[remove_server_selector]
+                outputs=[server_management_status, server_selector, remove_server_selector]
             )
             
             setup_mongo_btn.click(
