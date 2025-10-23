@@ -1,0 +1,20 @@
+# Core dependencies
+gradio>=4.0.0
+python-dotenv>=1.0.0
+
+# MCP Client SDK
+mcp>=1.2.0
+
+# MongoDB
+pymongo>=4.6.0
+motor>=3.3.0  # Async MongoDB driver
+
+# LLM Integration
+openai>=1.0.0
+anthropic>=0.18.0
+
+# Utilities
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+httpx>=0.25.0
+aiohttp>=3.9.0
