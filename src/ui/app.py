@@ -224,6 +224,33 @@ class MCPulseApp:
             logger.error(f"Error fetching models: {e}")
             return gr.update(choices=[], value=None), f"❌ Error: {str(e)}"
     
+    def save_api_keys(self, openai_key: str, anthropic_key: str, openrouter_key: str) -> str:
+        """Save all API keys at once."""
+        try:
+            updated = []
+            
+            if openai_key and openai_key.strip():
+                self.api_keys["openai"] = openai_key.strip()
+                updated.append("OpenAI")
+            
+            if anthropic_key and anthropic_key.strip():
+                self.api_keys["anthropic"] = anthropic_key.strip()
+                updated.append("Anthropic")
+            
+            if openrouter_key and openrouter_key.strip():
+                self.api_keys["openrouter"] = openrouter_key.strip()
+                updated.append("OpenRouter")
+            
+            if updated:
+                configured = [k for k, v in self.api_keys.items() if v]
+                return f"✅ Updated: {', '.join(updated)}\n🔑 Configured providers: {', '.join(configured)}"
+            else:
+                return "⚠️ No API keys provided"
+        
+        except Exception as e:
+            logger.error(f"Error saving API keys: {e}")
+            return f"❌ Error: {str(e)}"
+    
     def add_server(self, name: str, url: str, description: str) -> Tuple[str, gr.update]:
         """Add a new MCP server."""
         if not name or not url:
@@ -549,7 +576,36 @@ class MCPulseApp:
                                 new_session_btn = gr.Button("New Session")
                         
                         with gr.Column(scale=1):
-                            gr.Markdown("### Server Selection")
+                            gr.Markdown("### 🤖 AI Model Selection")
+                            
+                            chat_llm_provider = gr.Dropdown(
+                                choices=["openai", "anthropic", "openrouter"],
+                                label="Provider",
+                                value=self.current_provider,
+                                info="Select your AI provider"
+                            )
+                            
+                            with gr.Row():
+                                refresh_models_btn = gr.Button("🔄", scale=1, size="sm")
+                                chat_llm_model = gr.Dropdown(
+                                    choices=[self.current_model] if self.current_model else [],
+                                    label="Model",
+                                    value=self.current_model,
+                                    allow_custom_value=True,
+                                    scale=4,
+                                    info="Select or type model name"
+                                )
+                            
+                            llm_info_status = gr.Textbox(
+                                label="",
+                                value=self.get_current_llm_config()["status"],
+                                interactive=False,
+                                show_label=False,
+                                lines=2
+                            )
+                            
+                            gr.Markdown("---")
+                            gr.Markdown("### 🔌 Server Selection")
                             server_selector = gr.CheckboxGroup(
                                 choices=self.get_server_list(),
                                 label="Active Servers",
@@ -559,10 +615,11 @@ class MCPulseApp:
                             connect_btn = gr.Button("Connect Selected", variant="secondary")
                             connection_status = gr.Textbox(
                                 label="Connection Status",
-                                lines=5,
+                                lines=4,
                                 interactive=False
                             )
                             
+                            gr.Markdown("---")
                             system_prompt = gr.Textbox(
                                 label="System Prompt",
                                 placeholder="You are a helpful assistant...",
@@ -578,64 +635,34 @@ class MCPulseApp:
                 
                 # Configuration Tab
                 with gr.Tab("⚙️ Configuration"):
-                    gr.Markdown("## LLM Provider Configuration")
-                    gr.Markdown("Configure your AI provider and API key here. Changes take effect immediately.")
+                    gr.Markdown("## 🔑 API Keys Configuration")
+                    gr.Markdown("Enter your API keys for each provider. Keys are stored securely and changes take effect immediately.")
                     
                     with gr.Row():
                         with gr.Column():
-                            llm_provider = gr.Dropdown(
-                                choices=["openai", "anthropic", "openrouter"],
-                                label="LLM Provider",
-                                value=self.current_provider,
-                                info="Select your AI provider"
-                            )
-                            llm_api_key = gr.Textbox(
-                                label="API Key",
-                                placeholder="Enter your API key here",
+                            config_openai_key = gr.Textbox(
+                                label="OpenAI API Key",
+                                placeholder="sk-...",
                                 type="password",
-                                info="Your API key (kept secure, not logged)"
+                                info="Get your key at: https://platform.openai.com/api-keys"
+                            )
+                            config_anthropic_key = gr.Textbox(
+                                label="Anthropic API Key",
+                                placeholder="sk-ant-...",
+                                type="password",
+                                info="Get your key at: https://console.anthropic.com/settings/keys"
+                            )
+                            config_openrouter_key = gr.Textbox(
+                                label="OpenRouter API Key",
+                                placeholder="sk-or-...",
+                                type="password",
+                                info="Get your key at: https://openrouter.ai/keys (Access 100+ models)"
                             )
                             
-                            with gr.Row():
-                                fetch_models_btn = gr.Button("🔄 Fetch Available Models", variant="secondary", scale=1)
-                                fetch_status = gr.Textbox(
-                                    label="",
-                                    placeholder="Status will appear here",
-                                    interactive=False,
-                                    scale=2,
-                                    show_label=False
-                                )
-                            
-                            llm_model = gr.Dropdown(
-                                choices=[],
-                                label="Model",
-                                value=self.current_model,
-                                allow_custom_value=True,
-                                info="Select a model or type custom model name"
-                            )
-                            
-                            with gr.Accordion("📝 Provider Information & Model Examples", open=False):
-                                gr.Markdown("""
-                                **OpenAI:**
-                                - Get API key: https://platform.openai.com/api-keys
-                                - Models: `gpt-4-turbo-preview`, `gpt-4`, `gpt-3.5-turbo`
-                                
-                                **Anthropic:**
-                                - Get API key: https://console.anthropic.com/settings/keys
-                                - Models: `claude-3-5-sonnet-20241022`, `claude-3-opus-20240229`
-                                
-                                **OpenRouter:**
-                                - Get API key: https://openrouter.ai/keys
-                                - Models: `openai/gpt-4-turbo`, `anthropic/claude-3.5-sonnet`, `google/gemini-pro`
-                                - Supports 100+ models from multiple providers
-                                
-                                **Tip:** Click "🔄 Fetch Available Models" after entering your API key to get the latest model list.
-                                """)
-                            
-                            update_llm_btn = gr.Button("💾 Update LLM Configuration", variant="primary")
-                            llm_status = gr.Textbox(
+                            save_keys_btn = gr.Button("💾 Save API Keys", variant="primary")
+                            keys_status = gr.Textbox(
                                 label="Status",
-                                value=self.get_current_llm_config()["status"],
+                                value=f"Current providers configured: {', '.join([k for k, v in self.api_keys.items() if v])}",
                                 interactive=False
                             )
                     
@@ -706,25 +733,56 @@ class MCPulseApp:
                 self.use_mongodb = enabled
                 return f"MongoDB: {'Enabled' if enabled else 'Disabled'}"
             
-            def update_llm_handler(provider, api_key, model):
-                return self.update_llm_config(provider, api_key, model)
+            def save_keys_handler(openai_key, anthropic_key, openrouter_key):
+                return self.save_api_keys(openai_key, anthropic_key, openrouter_key)
             
-            async def fetch_models_handler(provider, api_key):
+            async def fetch_models_handler(provider):
+                # Use the stored API key for the selected provider
+                api_key = self.api_keys.get(provider, "")
+                if not api_key:
+                    return gr.update(choices=[], value=None), f"⚠️ Please configure {provider} API key in Configuration tab first"
                 return await self.fetch_available_models(provider, api_key)
+            
+            def switch_provider_handler(provider, model):
+                # When provider changes, update LLM and return status
+                api_key = self.api_keys.get(provider, "")
+                if not api_key:
+                    return gr.update(value=model), f"⚠️ No API key configured for {provider}. Please add it in Configuration tab."
+                
+                # Update the LLM client
+                status = self.update_llm_config(provider, api_key, model)
+                return gr.update(value=model), status
             
             # Wire up events
             
-            # LLM Configuration
-            fetch_models_btn.click(
+            # Chat tab - Model selection
+            refresh_models_btn.click(
                 fetch_models_handler,
-                inputs=[llm_provider, llm_api_key],
-                outputs=[llm_model, fetch_status]
+                inputs=[chat_llm_provider],
+                outputs=[chat_llm_model, llm_info_status]
             )
             
-            update_llm_btn.click(
-                update_llm_handler,
-                inputs=[llm_provider, llm_api_key, llm_model],
-                outputs=[llm_status]
+            chat_llm_provider.change(
+                switch_provider_handler,
+                inputs=[chat_llm_provider, chat_llm_model],
+                outputs=[chat_llm_model, llm_info_status]
+            )
+            
+            chat_llm_model.change(
+                lambda provider, model: self.update_llm_config(
+                    provider, 
+                    self.api_keys.get(provider, ""), 
+                    model
+                ),
+                inputs=[chat_llm_provider, chat_llm_model],
+                outputs=[llm_info_status]
+            )
+            
+            # Configuration tab - API Keys
+            save_keys_btn.click(
+                save_keys_handler,
+                inputs=[config_openai_key, config_anthropic_key, config_openrouter_key],
+                outputs=[keys_status]
             )
             
             # Chat events
