@@ -151,6 +151,79 @@ class MCPulseApp:
             "status": "✅ Connected" if self.llm_client else "❌ Not configured"
         }
     
+    async def fetch_available_models(self, provider: str, api_key: str) -> Tuple[gr.update, str]:
+        """
+        Fetch available models from the provider.
+        
+        Args:
+            provider: LLM provider (openai, anthropic, openrouter)
+            api_key: API key for the provider
+        
+        Returns:
+            Tuple of (Dropdown update with models, status message)
+        """
+        try:
+            if not api_key or api_key.startswith("your_") or api_key.strip() == "":
+                return gr.update(choices=[], value=None), "⚠️ Please enter a valid API key first"
+            
+            models = []
+            
+            if provider == "openai":
+                try:
+                    from openai import AsyncOpenAI
+                    client = AsyncOpenAI(api_key=api_key)
+                    response = await client.models.list()
+                    # Filter for chat models
+                    models = [
+                        model.id for model in response.data 
+                        if any(x in model.id for x in ['gpt-4', 'gpt-3.5', 'gpt'])
+                    ]
+                    models.sort(reverse=True)  # Newest first
+                except Exception as e:
+                    logger.error(f"Error fetching OpenAI models: {e}")
+                    return gr.update(choices=[], value=None), f"❌ Error: {str(e)}"
+            
+            elif provider == "anthropic":
+                # Anthropic doesn't have a list endpoint, use known models
+                models = [
+                    "claude-3-5-sonnet-20241022",
+                    "claude-3-5-sonnet-20240620",
+                    "claude-3-opus-20240229",
+                    "claude-3-sonnet-20240229",
+                    "claude-3-haiku-20240307",
+                    "claude-2.1",
+                    "claude-2.0",
+                ]
+            
+            elif provider == "openrouter":
+                try:
+                    import httpx
+                    async with httpx.AsyncClient() as client:
+                        response = await client.get(
+                            "https://openrouter.ai/api/v1/models",
+                            headers={"Authorization": f"Bearer {api_key}"},
+                            timeout=10.0
+                        )
+                        if response.status_code == 200:
+                            data = response.json()
+                            models = [model["id"] for model in data.get("data", [])]
+                            # Sort popular models first
+                            models.sort()
+                        else:
+                            return gr.update(choices=[], value=None), f"❌ Error: API returned status {response.status_code}"
+                except Exception as e:
+                    logger.error(f"Error fetching OpenRouter models: {e}")
+                    return gr.update(choices=[], value=None), f"❌ Error: {str(e)}"
+            
+            if models:
+                return gr.update(choices=models, value=models[0]), f"✅ Found {len(models)} models"
+            else:
+                return gr.update(choices=[], value=None), "⚠️ No models found"
+                
+        except Exception as e:
+            logger.error(f"Error fetching models: {e}")
+            return gr.update(choices=[], value=None), f"❌ Error: {str(e)}"
+    
     def add_server(self, name: str, url: str, description: str) -> Tuple[str, gr.update]:
         """Add a new MCP server."""
         if not name or not url:
@@ -522,11 +595,23 @@ class MCPulseApp:
                                 type="password",
                                 info="Your API key (kept secure, not logged)"
                             )
-                            llm_model = gr.Textbox(
-                                label="Model Name",
+                            
+                            with gr.Row():
+                                fetch_models_btn = gr.Button("🔄 Fetch Available Models", variant="secondary", scale=1)
+                                fetch_status = gr.Textbox(
+                                    label="",
+                                    placeholder="Status will appear here",
+                                    interactive=False,
+                                    scale=2,
+                                    show_label=False
+                                )
+                            
+                            llm_model = gr.Dropdown(
+                                choices=[],
+                                label="Model",
                                 value=self.current_model,
-                                placeholder="e.g., gpt-4-turbo-preview",
-                                info="Model to use for chat completions"
+                                allow_custom_value=True,
+                                info="Select a model or type custom model name"
                             )
                             
                             with gr.Accordion("📝 Provider Information & Model Examples", open=False):
@@ -543,6 +628,8 @@ class MCPulseApp:
                                 - Get API key: https://openrouter.ai/keys
                                 - Models: `openai/gpt-4-turbo`, `anthropic/claude-3.5-sonnet`, `google/gemini-pro`
                                 - Supports 100+ models from multiple providers
+                                
+                                **Tip:** Click "🔄 Fetch Available Models" after entering your API key to get the latest model list.
                                 """)
                             
                             update_llm_btn = gr.Button("💾 Update LLM Configuration", variant="primary")
@@ -554,7 +641,7 @@ class MCPulseApp:
                     
                     gr.Markdown("---")
                     gr.Markdown("## MCP Server Management")
-                    
+
                     with gr.Row():
                         with gr.Column():
                             gr.Markdown("### Add New Server")
@@ -622,9 +709,18 @@ class MCPulseApp:
             def update_llm_handler(provider, api_key, model):
                 return self.update_llm_config(provider, api_key, model)
             
+            async def fetch_models_handler(provider, api_key):
+                return await self.fetch_available_models(provider, api_key)
+            
             # Wire up events
             
             # LLM Configuration
+            fetch_models_btn.click(
+                fetch_models_handler,
+                inputs=[llm_provider, llm_api_key],
+                outputs=[llm_model, fetch_status]
+            )
+            
             update_llm_btn.click(
                 update_llm_handler,
                 inputs=[llm_provider, llm_api_key, llm_model],
