@@ -427,8 +427,8 @@ class MCPulseApp:
         history.append([message, None])
         yield history, ""
         
-        # Show thinking indicator
-        history[-1][1] = "⏳ Thinking..."
+        # Show thinking indicator with animated dots
+        history[-1][1] = '<div class="typing-indicator"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>'
         yield history, ""
         
         try:
@@ -688,22 +688,36 @@ class MCPulseApp:
         
         # Custom CSS for thinking animation and password fields
         custom_css = """
-        @keyframes thinking {
-            0%, 20% { opacity: 0.3; }
-            50% { opacity: 1; }
-            100% { opacity: 0.3; }
+        @keyframes bounce {
+            0%, 80%, 100% {
+                transform: translateY(0);
+            }
+            40% {
+                transform: translateY(-10px);
+            }
         }
         
-        .thinking-dots {
+        .typing-indicator {
+            display: inline-flex;
+            align-items: flex-end;
+            gap: 6px;
+            height: 20px;
+        }
+        
+        .typing-indicator .dot {
+            width: 8px;
+            height: 8px;
+            background-color: #666;
+            border-radius: 50%;
             display: inline-block;
-            animation: thinking 1.4s infinite;
+            animation: bounce 1.2s infinite ease-in-out;
         }
         
-        .thinking-dots:nth-child(2) {
+        .typing-indicator .dot:nth-child(2) {
             animation-delay: 0.2s;
         }
         
-        .thinking-dots:nth-child(3) {
+        .typing-indicator .dot:nth-child(3) {
             animation-delay: 0.4s;
         }
         
