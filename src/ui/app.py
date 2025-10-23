@@ -387,6 +387,10 @@ class MCPulseApp:
         history.append([message, None])
         yield history, ""
         
+        # Show thinking indicator
+        history[-1][1] = "⏳ Thinking..."
+        yield history, ""
+        
         try:
             # Save user message to MongoDB if enabled
             if self.use_mongodb and self.mongo_handler:
@@ -642,7 +646,29 @@ class MCPulseApp:
     def create_interface(self) -> gr.Blocks:
         """Create and return the Gradio interface."""
         
-        with gr.Blocks(title="MCPulse - MCP SSE Client", theme=gr.themes.Soft()) as app:
+        # Custom CSS for thinking animation
+        custom_css = """
+        @keyframes thinking {
+            0%, 20% { opacity: 0.3; }
+            50% { opacity: 1; }
+            100% { opacity: 0.3; }
+        }
+        
+        .thinking-dots {
+            display: inline-block;
+            animation: thinking 1.4s infinite;
+        }
+        
+        .thinking-dots:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        
+        .thinking-dots:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        """
+        
+        with gr.Blocks(title="MCPulse - MCP SSE Client", theme=gr.themes.Soft(), css=custom_css) as app:
             gr.Markdown("# 🔌 MCPulse - MCP SSE Client")
             gr.Markdown("Connect to MCP servers and chat with AI assistants that can use their tools.")
             
